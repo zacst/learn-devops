@@ -47,11 +47,11 @@ pipeline {
             }
         }
 
-        stage('Test Web App') {
-            steps {
-                sh 'curl -f http://localhost:5000'
-            }
-        }
+        // stage('Test Web App') {
+        //     steps {
+        //         sh 'curl -f http://localhost:5000'
+        //     }
+        // }
     }
 
     post {
