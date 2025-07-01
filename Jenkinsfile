@@ -5,15 +5,15 @@ pipeline {
             filename 'Dockerfile'
             // Additional arguments if needed
             additionalBuildArgs '--no-cache'
-            // Fix Windows Docker path issues
-            args '--user root'
+            // Use proper Linux paths in container
+            args '--user root -v /var/run/docker.sock:/var/run/docker.sock'
         }
     }
 
     environment {
         COMPOSE_PROJECT_NAME = "flaskci"
         COMPOSE_FILE = "app/docker-compose.yml"
-        // Fix Windows Docker daemon issues
+        // Disable BuildKit for compatibility
         DOCKER_BUILDKIT = "0"
         COMPOSE_DOCKER_CLI_BUILD = "0"
     }
@@ -29,16 +29,10 @@ pipeline {
             steps {
                 script {
                     dir('app') {
-                        // Use bat for Windows or sh for Unix
-                        if (isUnix()) {
-                            sh 'docker-compose down -v || true'
-                            sh 'docker-compose build'
-                            sh 'docker-compose up -d'
-                        } else {
-                            bat 'docker-compose down -v || exit 0'
-                            bat 'docker-compose build'
-                            bat 'docker-compose up -d'
-                        }
+                        // Clean up any existing containers first
+                        sh 'docker-compose down -v || true'
+                        sh 'docker-compose build --no-cache'
+                        sh 'docker-compose up -d'
                     }
                 }
             }
@@ -54,18 +48,10 @@ pipeline {
 
                     dir('app') {
                         while (count < maxRetries) {
-                            def result
-                            if (isUnix()) {
-                                result = sh(
-                                    script: 'docker-compose exec -T db pg_isready -U postgres',
-                                    returnStatus: true
-                                )
-                            } else {
-                                result = bat(
-                                    script: 'docker-compose exec -T db pg_isready -U postgres',
-                                    returnStatus: true
-                                )
-                            }
+                            def result = sh(
+                                script: 'docker-compose exec -T db pg_isready -U postgres',
+                                returnStatus: true
+                            )
                             if (result == 0) {
                                 dbReady = true
                                 echo "Database is ready!"
@@ -93,29 +79,17 @@ pipeline {
                     def ready = false
 
                     while (count < maxRetries) {
-                        // Test the health endpoint
-                        def result
-                        if (isUnix()) {
-                            result = sh(
-                                script: 'curl -s -f http://localhost:5000/health',
+                        // Test the health endpoint using docker-compose exec
+                        dir('app') {
+                            def result = sh(
+                                script: 'docker-compose exec -T backend curl -s -f http://localhost:5000/health',
                                 returnStatus: true
                             )
-                        } else {
-                            // Use PowerShell for Windows HTTP requests
-                            result = powershell(
-                                script: '''
-                                try {
-                                    $response = Invoke-WebRequest -Uri "http://localhost:5000/health" -TimeoutSec 5
-                                    if ($response.StatusCode -eq 200) { exit 0 } else { exit 1 }
-                                } catch { exit 1 }
-                                ''',
-                                returnStatus: true
-                            )
-                        }
-                        if (result == 0) {
-                            ready = true
-                            echo "Flask app is ready!"
-                            break
+                            if (result == 0) {
+                                ready = true
+                                echo "Flask app is ready!"
+                                break
+                            }
                         }
                         echo "App not ready yet, waiting... (${count + 1}/${maxRetries})"
                         
@@ -123,15 +97,9 @@ pipeline {
                         if (count % 10 == 0 && count > 0) {
                             echo "App logs (last 20 lines):"
                             dir('app') {
-                                if (isUnix()) {
-                                    sh 'docker-compose logs --tail=20 backend'
-                                    echo "Container status:"
-                                    sh 'docker-compose ps'
-                                } else {
-                                    bat 'docker-compose logs --tail=20 backend'
-                                    echo "Container status:"
-                                    bat 'docker-compose ps'
-                                }
+                                sh 'docker-compose logs --tail=20 backend'
+                                echo "Container status:"
+                                sh 'docker-compose ps'
                             }
                         }
                         
@@ -142,20 +110,10 @@ pipeline {
                     if (!ready) {
                         echo "App failed to start. Final diagnostics:"
                         dir('app') {
-                            if (isUnix()) {
-                                sh 'docker-compose logs backend'
-                                sh 'docker-compose logs db'
-                                sh 'docker-compose ps'
-                            } else {
-                                bat 'docker-compose logs backend'
-                                bat 'docker-compose logs db'
-                                bat 'docker-compose ps'
-                            }
-                        }
-                        if (isUnix()) {
-                            sh 'netstat -an | grep :5000 || echo "No process listening on port 5000"'
-                        } else {
-                            bat 'netstat -an | findstr :5000 || echo "No process listening on port 5000"'
+                            sh 'docker-compose logs backend || true'
+                            sh 'docker-compose logs db || true'
+                            sh 'docker-compose ps || true'
+                            sh 'docker ps -a || true'
                         }
                         error "App did not start in time."
                     }
@@ -168,24 +126,23 @@ pipeline {
                 script {
                     echo "Running tests:"
                     
-                    if (isUnix()) {
-                        // Test health endpoint
-                        sh 'curl -f http://localhost:5000/health'
+                    dir('app') {
+                        // Test health endpoint from within the backend container
+                        sh 'docker-compose exec -T backend curl -f http://localhost:5000/health'
                         
                         // Test main endpoint
-                        sh 'curl -f http://localhost:5000'
+                        sh 'docker-compose exec -T backend curl -f http://localhost:5000'
                         
-                        // Get HTTP status code
+                        // Get HTTP status code and response
                         def httpStatus = sh(
-                            script: 'curl -s -o /dev/null -w "%{http_code}" http://localhost:5000',
+                            script: 'docker-compose exec -T backend curl -s -o /dev/null -w "%{http_code}" http://localhost:5000',
                             returnStdout: true
                         ).trim()
                         
                         echo "HTTP Status Code: ${httpStatus}"
                         
-                        // Get response content
                         def response = sh(
-                            script: 'curl -s http://localhost:5000',
+                            script: 'docker-compose exec -T backend curl -s http://localhost:5000',
                             returnStdout: true
                         ).trim()
                         
@@ -202,41 +159,6 @@ pipeline {
                         }
                         
                         echo "All tests passed! HTTP Status: ${httpStatus}"
-                    } else {
-                        // Windows PowerShell equivalent
-                        def testResult = powershell(
-                            script: '''
-                            try {
-                                $healthResponse = Invoke-WebRequest -Uri "http://localhost:5000/health" -TimeoutSec 10
-                                Write-Host "Health check passed"
-                                
-                                $mainResponse = Invoke-WebRequest -Uri "http://localhost:5000" -TimeoutSec 10
-                                Write-Host "HTTP Status Code: $($mainResponse.StatusCode)"
-                                Write-Host "Response content: $($mainResponse.Content)"
-                                
-                                if ($mainResponse.StatusCode -ne 200) {
-                                    Write-Error "Expected HTTP 200, got $($mainResponse.StatusCode)"
-                                    exit 1
-                                }
-                                
-                                if ($mainResponse.Content -notmatch "Hello from Flask") {
-                                    Write-Error "Response does not contain expected content"
-                                    exit 1
-                                }
-                                
-                                Write-Host "All tests passed! HTTP Status: $($mainResponse.StatusCode)"
-                                exit 0
-                            } catch {
-                                Write-Error "Test failed: $_"
-                                exit 1
-                            }
-                            ''',
-                            returnStatus: true
-                        )
-                        
-                        if (testResult != 0) {
-                            error "Web app tests failed"
-                        }
                     }
                 }
             }
@@ -248,11 +170,7 @@ pipeline {
                     echo "Running unit tests inside the application container..."
                     dir('app') {
                         // Run tests inside the backend container
-                        if (isUnix()) {
-                            sh 'docker-compose exec -T backend python -m pytest tests/ -v || echo "No tests found"'
-                        } else {
-                            bat 'docker-compose exec -T backend python -m pytest tests/ -v || echo "No tests found"'
-                        }
+                        sh 'docker-compose exec -T backend python -m pytest tests/ -v || echo "No tests found"'
                     }
                 }
             }
@@ -265,11 +183,8 @@ pipeline {
                 echo "Cleaning up containers"
                 try {
                     dir('app') {
-                        if (isUnix()) {
-                            sh 'docker-compose down -v || true'
-                        } else {
-                            bat 'docker-compose down -v || exit 0'
-                        }
+                        sh 'docker-compose down -v || true'
+                        sh 'docker system prune -f || true'
                     }
                 } catch (Exception e) {
                     echo "Failed to cleanup containers: ${e.getMessage()}"
@@ -281,15 +196,10 @@ pipeline {
                 echo "Pipeline failed. Final logs:"
                 try {
                     dir('app') {
-                        if (isUnix()) {
-                            sh 'docker-compose logs backend || echo "Failed to get backend logs"'
-                            sh 'docker-compose logs db || echo "Failed to get db logs"'
-                            sh 'docker-compose ps || echo "Failed to get container status"'
-                        } else {
-                            bat 'docker-compose logs backend || echo "Failed to get backend logs"'
-                            bat 'docker-compose logs db || echo "Failed to get db logs"'
-                            bat 'docker-compose ps || echo "Failed to get container status"'
-                        }
+                        sh 'docker-compose logs backend || echo "Failed to get backend logs"'
+                        sh 'docker-compose logs db || echo "Failed to get db logs"'
+                        sh 'docker-compose ps || echo "Failed to get container status"'
+                        sh 'docker ps -a || echo "Failed to get all containers"'
                     }
                 } catch (Exception e) {
                     echo "Failed to get failure logs: ${e.getMessage()}"
