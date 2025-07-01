@@ -19,8 +19,11 @@ def home():
     return message.text if message else "No message in DB"
 
 if __name__ == '__main__':
-    db.create_all()
-    if not Message.query.first():
-        db.session.add(Message(text="Hello, Brow — from DB!"))
-        db.session.commit()
+    # Create tables within application context
+    with app.app_context():
+        db.create_all()
+        if not Message.query.first():
+            db.session.add(Message(text="Hello, Brow — from DB!"))
+            db.session.commit()
+    
     app.run(host='0.0.0.0', port=5000)

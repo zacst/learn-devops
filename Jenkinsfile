@@ -22,13 +22,32 @@ pipeline {
             }
         }
 
-        stage('Debug - Check Container Status') {
+        stage('Wait for Database') {
             steps {
                 script {
-                    bat 'docker-compose ps'
-                    bat 'docker-compose logs backend'
-                    bat 'docker-compose logs db'
-                    bat 'netstat -an | findstr :5000'
+                    echo "Waiting for PostgreSQL to be ready..."
+                    def maxRetries = 30
+                    def count = 0
+                    def dbReady = false
+
+                    while (count < maxRetries) {
+                        def result = bat(
+                            script: 'docker-compose exec -T db pg_isready -U postgres',
+                            returnStatus: true
+                        )
+                        if (result == 0) {
+                            dbReady = true
+                            echo "Database is ready!"
+                            break
+                        }
+                        echo "Database not ready yet, waiting... (${count + 1}/${maxRetries})"
+                        sleep 2
+                        count++
+                    }
+
+                    if (!dbReady) {
+                        error "Database did not become ready in time."
+                    }
                 }
             }
         }
@@ -36,31 +55,68 @@ pipeline {
         stage('Wait for App to Start') {
             steps {
                 script {
-                    // Simple retry loop to wait for the Flask app to become available
-                    def maxRetries = 10
+                    echo "Waiting for Flask app to be ready..."
+                    def maxRetries = 20
                     def count = 0
                     def ready = false
 
                     while (count < maxRetries) {
-                        def result = bat(script: "curl -s http://localhost:5000", returnStatus: true)
+                        def result = bat(script: "curl -s -o nul -w \"%{http_code}\" http://localhost:5000", returnStatus: true)
                         if (result == 0) {
                             ready = true
+                            echo "Flask app is ready!"
                             break
                         }
-                        sleep 5
+                        echo "App not ready yet, waiting... (${count + 1}/${maxRetries})"
+                        sleep 3
                         count++
                     }
 
                     if (!ready) {
+                        // Show logs before failing
+                        echo "App failed to start. Showing recent logs:"
+                        bat 'docker-compose logs --tail=20 backend'
                         error "App did not start in time."
                     }
                 }
             }
         }
 
+        stage('Debug - Final Status Check') {
+            steps {
+                script {
+                    echo "Final status check:"
+                    bat 'docker-compose ps'
+                    bat 'netstat -an | findstr :5000'
+                    echo "Testing connectivity:"
+                    bat 'curl -v http://localhost:5000'
+                }
+            }
+        }
+
         stage('Test Web App') {
             steps {
-                bat 'curl -f http://localhost:5000'
+                script {
+                    echo "Running comprehensive tests:"
+                    
+                    // Test 1: Basic connectivity
+                    bat 'curl -f http://localhost:5000'
+                    
+                    // Test 2: Check response content
+                    bat 'curl -s http://localhost:5000 | findstr "Hello"'
+                    
+                    // Test 3: Check HTTP status
+                    def httpStatus = bat(
+                        script: 'curl -s -o nul -w "%{http_code}" http://localhost:5000',
+                        returnStdout: true
+                    ).trim()
+                    
+                    if (httpStatus != "200") {
+                        error "Expected HTTP 200, got ${httpStatus}"
+                    }
+                    
+                    echo "All tests passed! HTTP Status: ${httpStatus}"
+                }
             }
         }
     }
@@ -69,6 +125,17 @@ pipeline {
         always {
             echo "Cleaning up containers"
             bat 'docker-compose down -v'
+        }
+        failure {
+            echo "Pipeline failed. Showing final container logs:"
+            script {
+                // Show logs on failure
+                bat 'docker-compose logs --tail=50 backend'
+                bat 'docker-compose logs --tail=20 db'
+            }
+        }
+        success {
+            echo "Pipeline completed successfully!"
         }
     }
 }
