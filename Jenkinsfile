@@ -1,8 +1,16 @@
 pipeline {
-    agent any
+    agent {
+        dockerfile {
+            // Use the Dockerfile in the root directory for the Jenkins agent
+            filename 'Dockerfile'
+            // Additional arguments if needed
+            additionalBuildArgs '--no-cache'
+        }
+    }
 
     environment {
         COMPOSE_PROJECT_NAME = "flaskci"
+        COMPOSE_FILE = "app/docker-compose.yml"
     }
 
     stages {
@@ -15,9 +23,11 @@ pipeline {
         stage('Build and Start Services') {
             steps {
                 script {
-                    bat 'docker-compose down -v'
-                    bat 'docker-compose build'
-                    bat 'docker-compose up -d'
+                    dir('app') {
+                        sh 'docker-compose down -v || true'
+                        sh 'docker-compose build'
+                        sh 'docker-compose up -d'
+                    }
                 }
             }
         }
@@ -30,19 +40,21 @@ pipeline {
                     def count = 0
                     def dbReady = false
 
-                    while (count < maxRetries) {
-                        def result = bat(
-                            script: 'docker-compose exec -T db pg_isready -U postgres',
-                            returnStatus: true
-                        )
-                        if (result == 0) {
-                            dbReady = true
-                            echo "Database is ready!"
-                            break
+                    dir('app') {
+                        while (count < maxRetries) {
+                            def result = sh(
+                                script: 'docker-compose exec -T db pg_isready -U postgres',
+                                returnStatus: true
+                            )
+                            if (result == 0) {
+                                dbReady = true
+                                echo "Database is ready!"
+                                break
+                            }
+                            echo "Database not ready yet, waiting... (${count + 1}/${maxRetries})"
+                            sleep 2
+                            count++
                         }
-                        echo "Database not ready yet, waiting... (${count + 1}/${maxRetries})"
-                        sleep 2
-                        count++
                     }
 
                     if (!dbReady) {
@@ -61,9 +73,9 @@ pipeline {
                     def ready = false
 
                     while (count < maxRetries) {
-                        // Test from host machine only (not inside container)
-                        def result = bat(
-                            script: 'curl -s -f http://localhost:5000',
+                        // Test the health endpoint
+                        def result = sh(
+                            script: 'curl -s -f http://localhost:5000/health',
                             returnStatus: true
                         )
                         if (result == 0) {
@@ -76,9 +88,11 @@ pipeline {
                         // Show logs every 10 attempts
                         if (count % 10 == 0 && count > 0) {
                             echo "App logs (last 20 lines):"
-                            bat 'docker-compose logs --tail=20 backend'
-                            echo "Container status:"
-                            bat 'docker-compose ps'
+                            dir('app') {
+                                sh 'docker-compose logs --tail=20 backend'
+                                echo "Container status:"
+                                sh 'docker-compose ps'
+                            }
                         }
                         
                         sleep 3
@@ -87,10 +101,12 @@ pipeline {
 
                     if (!ready) {
                         echo "App failed to start. Final diagnostics:"
-                        bat 'docker-compose logs backend'
-                        bat 'docker-compose logs db'
-                        bat 'docker-compose ps'
-                        bat 'netstat -an | findstr :5000 || echo "No process listening on port 5000"'
+                        dir('app') {
+                            sh 'docker-compose logs backend'
+                            sh 'docker-compose logs db'
+                            sh 'docker-compose ps'
+                        }
+                        sh 'netstat -an | grep :5000 || echo "No process listening on port 5000"'
                         error "App did not start in time."
                     }
                 }
@@ -102,28 +118,25 @@ pipeline {
                 script {
                     echo "Running tests:"
                     
-                    // Test basic connectivity
-                    bat 'curl -f http://localhost:5000'
+                    // Test health endpoint
+                    sh 'curl -f http://localhost:5000/health'
                     
-                    // Get HTTP status code - Windows compatible version
-                    def httpStatusOutput = bat(
-                        script: 'curl -s -o nul -w "%%{http_code}" http://localhost:5000',
+                    // Test main endpoint
+                    sh 'curl -f http://localhost:5000'
+                    
+                    // Get HTTP status code
+                    def httpStatus = sh(
+                        script: 'curl -s -o /dev/null -w "%{http_code}" http://localhost:5000',
                         returnStdout: true
                     ).trim()
-                    
-                    // Extract just the status code (last line of output)
-                    def httpStatus = httpStatusOutput.split('\n')[-1].trim()
                     
                     echo "HTTP Status Code: ${httpStatus}"
                     
                     // Get response content
-                    def responseOutput = bat(
+                    def response = sh(
                         script: 'curl -s http://localhost:5000',
                         returnStdout: true
                     ).trim()
-                    
-                    // Extract just the response content (last line of output)
-                    def response = responseOutput.split('\n')[-1].trim()
                     
                     echo "Response content: ${response}"
                     
@@ -141,19 +154,35 @@ pipeline {
                 }
             }
         }
+
+        stage('Run Unit Tests') {
+            steps {
+                script {
+                    echo "Running unit tests inside the application container..."
+                    dir('app') {
+                        // Run tests inside the backend container
+                        sh 'docker-compose exec -T backend python -m pytest tests/ -v || echo "No tests found"'
+                    }
+                }
+            }
+        }
     }
 
     post {
         always {
             echo "Cleaning up containers"
-            bat 'docker-compose down -v'
+            dir('app') {
+                sh 'docker-compose down -v || true'
+            }
         }
         failure {
             echo "Pipeline failed. Final logs:"
             script {
-                bat 'docker-compose logs backend || echo "Failed to get backend logs"'
-                bat 'docker-compose logs db || echo "Failed to get db logs"'
-                bat 'docker-compose ps || echo "Failed to get container status"'
+                dir('app') {
+                    sh 'docker-compose logs backend || echo "Failed to get backend logs"'
+                    sh 'docker-compose logs db || echo "Failed to get db logs"'
+                    sh 'docker-compose ps || echo "Failed to get container status"'
+                }
             }
         }
         success {

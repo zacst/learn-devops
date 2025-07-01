@@ -1,34 +1,15 @@
 services:
-  db:
-    image: postgres:13
-    environment:
-      POSTGRES_DB: flaskdb
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  backend:
+  jenkins:
     build: .
+    image: fos-jenkins-blueocean:lts
+    container_name: jenkins-master
+    restart: on-failure
     ports:
-      - "5000:5000"
-    environment:
-      DATABASE_URL: postgresql://postgres:password@db:5432/flaskdb
-    depends_on:
-      db:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "powershell", "-Command", "try { $r = Invoke-WebRequest http://localhost:5000 -UseBasicParsing; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - "8081:8080"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - jenkins_docker_certs:/certs/client:ro
 
 volumes:
-  postgres_data:
+  jenkins_home:
+  jenkins_docker_certs:
