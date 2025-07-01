@@ -61,25 +61,15 @@ pipeline {
                     def ready = false
 
                     while (count < maxRetries) {
-                        // Fixed curl command - proper syntax for Windows
+                        // Use single quotes to avoid escaping issues
                         def result = bat(
-                            script: 'curl -s -o nul -w "%{http_code}" http://localhost:5000',
+                            script: 'curl -s -f http://localhost:5000',
                             returnStatus: true
                         )
                         if (result == 0) {
-                            // Also check if we got a 200 status code
-                            def httpCode = bat(
-                                script: 'curl -s -o nul -w "%{http_code}" http://localhost:5000',
-                                returnStdout: true
-                            ).trim()
-                            
-                            if (httpCode == "200") {
-                                ready = true
-                                echo "Flask app is ready! HTTP Status: ${httpCode}"
-                                break
-                            } else {
-                                echo "Got HTTP ${httpCode}, app not fully ready yet..."
-                            }
+                            ready = true
+                            echo "Flask app is ready!"
+                            break
                         }
                         echo "App not ready yet, waiting... (${count + 1}/${maxRetries})"
                         sleep 3
