@@ -20,8 +20,9 @@ def wait_for_db(max_retries=30):
     """Wait for database to be available with retries"""
     for i in range(max_retries):
         try:
-            # Test database connection
-            db.engine.execute('SELECT 1')
+            # Test database connection within application context
+            with app.app_context():
+                db.engine.execute('SELECT 1')
             print(f"Database connected successfully on attempt {i+1}")
             return True
         except Exception as e:
