@@ -127,22 +127,30 @@ pipeline {
 
     post {
         always {
-            dir('app') {
-                script {
-                    echo "Cleaning up containers..."
-                    sh 'docker-compose down -v || true'
-                    sh 'docker system prune -f || true'
+            script {
+                try {
+                    dir('app') {
+                        echo "Cleaning up containers..."
+                        sh 'docker-compose down -v || true'
+                        sh 'docker system prune -f || true'
+                    }
+                } catch (Exception e) {
+                    echo "Cleanup failed: ${e.getMessage()}"
                 }
             }
         }
         failure {
-            dir('app') {
-                script {
-                    echo "Pipeline failed. Collecting logs..."
-                    sh 'docker-compose logs backend || true'
-                    sh 'docker-compose logs db || true'
-                    sh 'docker-compose ps || true'
-                    sh 'docker ps -a || true'
+            script {
+                try {
+                    dir('app') {
+                        echo "Pipeline failed. Collecting logs..."
+                        sh 'docker-compose logs backend || true'
+                        sh 'docker-compose logs db || true'
+                        sh 'docker-compose ps || true'
+                        sh 'docker ps -a || true'
+                    }
+                } catch (Exception e) {
+                    echo "Failed to collect logs: ${e.getMessage()}"
                 }
             }
         }
