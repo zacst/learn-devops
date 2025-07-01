@@ -22,6 +22,17 @@ pipeline {
             }
         }
 
+        stage('Debug - Check Container Status') {
+            steps {
+                script {
+                    bat 'docker-compose ps'
+                    bat 'docker-compose logs backend'
+                    bat 'docker-compose logs db'
+                    bat 'netstat -an | findstr :5000'
+                }
+            }
+        }
+
         stage('Wait for App to Start') {
             steps {
                 script {
