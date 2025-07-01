@@ -16,7 +16,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/zacst/learn-devops.git'
+                git branch: 'docker-agent', url: 'https://github.com/zacst/learn-devops.git'
             }
         }
 
