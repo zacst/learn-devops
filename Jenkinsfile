@@ -106,18 +106,24 @@ pipeline {
                     bat 'curl -f http://localhost:5000'
                     
                     // Get HTTP status code - Windows compatible version
-                    def httpStatus = bat(
+                    def httpStatusOutput = bat(
                         script: 'curl -s -o nul -w "%%{http_code}" http://localhost:5000',
                         returnStdout: true
                     ).trim()
                     
+                    // Extract just the status code (last line of output)
+                    def httpStatus = httpStatusOutput.split('\n')[-1].trim()
+                    
                     echo "HTTP Status Code: ${httpStatus}"
                     
                     // Get response content
-                    def response = bat(
+                    def responseOutput = bat(
                         script: 'curl -s http://localhost:5000',
                         returnStdout: true
                     ).trim()
+                    
+                    // Extract just the response content (last line of output)
+                    def response = responseOutput.split('\n')[-1].trim()
                     
                     echo "Response content: ${response}"
                     
