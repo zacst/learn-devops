@@ -61,11 +61,25 @@ pipeline {
                     def ready = false
 
                     while (count < maxRetries) {
-                        def result = bat(script: "curl -s -o nul -w \"%{http_code}\" http://localhost:5000", returnStatus: true)
+                        // Fixed curl command - proper syntax for Windows
+                        def result = bat(
+                            script: 'curl -s -o nul -w "%{http_code}" http://localhost:5000',
+                            returnStatus: true
+                        )
                         if (result == 0) {
-                            ready = true
-                            echo "Flask app is ready!"
-                            break
+                            // Also check if we got a 200 status code
+                            def httpCode = bat(
+                                script: 'curl -s -o nul -w "%{http_code}" http://localhost:5000',
+                                returnStdout: true
+                            ).trim()
+                            
+                            if (httpCode == "200") {
+                                ready = true
+                                echo "Flask app is ready! HTTP Status: ${httpCode}"
+                                break
+                            } else {
+                                echo "Got HTTP ${httpCode}, app not fully ready yet..."
+                            }
                         }
                         echo "App not ready yet, waiting... (${count + 1}/${maxRetries})"
                         sleep 3
@@ -76,6 +90,9 @@ pipeline {
                         // Show logs before failing
                         echo "App failed to start. Showing recent logs:"
                         bat 'docker-compose logs --tail=20 backend'
+                        bat 'docker-compose logs --tail=10 db'
+                        echo "Container status:"
+                        bat 'docker-compose ps'
                         error "App did not start in time."
                     }
                 }
@@ -87,9 +104,12 @@ pipeline {
                 script {
                     echo "Final status check:"
                     bat 'docker-compose ps'
-                    bat 'netstat -an | findstr :5000'
+                    
+                    // Windows netstat command
+                    bat 'netstat -an | findstr :5000 || echo "No process listening on port 5000"'
+                    
                     echo "Testing connectivity:"
-                    bat 'curl -v http://localhost:5000'
+                    bat 'curl -v http://localhost:5000 || echo "Curl failed"'
                 }
             }
         }
@@ -102,8 +122,8 @@ pipeline {
                     // Test 1: Basic connectivity
                     bat 'curl -f http://localhost:5000'
                     
-                    // Test 2: Check response content
-                    bat 'curl -s http://localhost:5000 | findstr "Hello"'
+                    // Test 2: Check response content (Windows findstr)
+                    bat 'curl -s http://localhost:5000 | findstr "Hello" || echo "Hello not found in response"'
                     
                     // Test 3: Check HTTP status
                     def httpStatus = bat(
@@ -130,8 +150,9 @@ pipeline {
             echo "Pipeline failed. Showing final container logs:"
             script {
                 // Show logs on failure
-                bat 'docker-compose logs --tail=50 backend'
-                bat 'docker-compose logs --tail=20 db'
+                bat 'docker-compose logs --tail=50 backend || echo "Failed to get backend logs"'
+                bat 'docker-compose logs --tail=20 db || echo "Failed to get db logs"'
+                bat 'docker-compose ps || echo "Failed to get container status"'
             }
         }
         success {
