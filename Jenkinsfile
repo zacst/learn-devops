@@ -8,7 +8,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git 'https://github.com/zacst/learn-devops.git' // Replace with your actual repo URL
+                git branch: 'main', url: 'https://github.com/zacst/learn-devops.git'
             }
         }
 
