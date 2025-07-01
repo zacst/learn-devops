@@ -115,7 +115,7 @@ pipeline {
                     
                     // Check HTTP status
                     def httpStatus = bat(
-                        script: 'curl -s -o nul -w "%{http_code}" http://localhost:5000',
+                        script: 'curl -s http://localhost:5000',
                         returnStdout: true
                     ).trim()
                     
