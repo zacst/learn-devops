@@ -105,9 +105,9 @@ pipeline {
                     // Test basic connectivity
                     bat 'curl -f http://localhost:5000'
                     
-                    // Get HTTP status code
+                    // Get HTTP status code - Windows compatible version
                     def httpStatus = bat(
-                        script: 'curl -s -o NUL -w "%{http_code}" http://localhost:5000',
+                        script: 'curl -s -o nul -w "%%{http_code}" http://localhost:5000',
                         returnStdout: true
                     ).trim()
                     
