@@ -105,22 +105,30 @@ pipeline {
                     // Test basic connectivity
                     bat 'curl -f http://localhost:5000'
                     
-                    // Get and verify response content
+                    // Get HTTP status code
+                    def httpStatus = bat(
+                        script: 'curl -s -o NUL -w "%{http_code}" http://localhost:5000',
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo "HTTP Status Code: ${httpStatus}"
+                    
+                    // Get response content
                     def response = bat(
                         script: 'curl -s http://localhost:5000',
                         returnStdout: true
                     ).trim()
                     
-                    echo "Response: ${response}"
+                    echo "Response content: ${response}"
                     
-                    // Check HTTP status
-                    def httpStatus = bat(
-                        script: 'curl -s http://localhost:5000',
-                        returnStdout: true
-                    ).trim()
-                    
+                    // Validate HTTP status
                     if (httpStatus != "200") {
                         error "Expected HTTP 200, got ${httpStatus}"
+                    }
+                    
+                    // Validate response content contains expected text
+                    if (!response.contains("Hello from Flask")) {
+                        error "Response does not contain expected content. Got: ${response}"
                     }
                     
                     echo "All tests passed! HTTP Status: ${httpStatus}"
