@@ -22,84 +22,52 @@ pipeline {
             }
         }
 
-        stage('Wait for Database') {
+        stage('Wait for Services') {
             steps {
                 script {
-                    echo "Waiting for PostgreSQL to be ready..."
-                    def maxRetries = 30
+                    echo "Waiting for services to be healthy..."
+                    def maxRetries = 60
                     def count = 0
-                    def dbReady = false
+                    def servicesReady = false
 
                     while (count < maxRetries) {
                         def result = bat(
-                            script: 'docker-compose exec -T db pg_isready -U postgres',
+                            script: 'docker-compose ps --services --filter "status=running" | findstr /C:"db backend"',
                             returnStatus: true
                         )
-                        if (result == 0) {
-                            dbReady = true
-                            echo "Database is ready!"
+                        
+                        // Check if both services are healthy
+                        def healthCheck = bat(
+                            script: 'docker-compose exec -T backend curl -f http://localhost:5000',
+                            returnStatus: true
+                        )
+                        
+                        if (result == 0 && healthCheck == 0) {
+                            servicesReady = true
+                            echo "All services are ready!"
                             break
                         }
-                        echo "Database not ready yet, waiting... (${count + 1}/${maxRetries})"
-                        sleep 2
+                        echo "Services not ready yet, waiting... (${count + 1}/${maxRetries})"
+                        
+                        // Show container status every 10 attempts
+                        if (count % 10 == 0) {
+                            echo "Current container status:"
+                            bat 'docker-compose ps'
+                            echo "Backend logs (last 10 lines):"
+                            bat 'docker-compose logs --tail=10 backend'
+                        }
+                        
+                        sleep 5
                         count++
                     }
 
-                    if (!dbReady) {
-                        error "Database did not become ready in time."
-                    }
-                }
-            }
-        }
-
-        stage('Wait for App to Start') {
-            steps {
-                script {
-                    echo "Waiting for Flask app to be ready..."
-                    def maxRetries = 20
-                    def count = 0
-                    def ready = false
-
-                    while (count < maxRetries) {
-                        // Use single quotes to avoid escaping issues
-                        def result = bat(
-                            script: 'curl -s -f http://localhost:5000',
-                            returnStatus: true
-                        )
-                        if (result == 0) {
-                            ready = true
-                            echo "Flask app is ready!"
-                            break
-                        }
-                        echo "App not ready yet, waiting... (${count + 1}/${maxRetries})"
-                        sleep 3
-                        count++
-                    }
-
-                    if (!ready) {
-                        // Show logs before failing
-                        echo "App failed to start. Showing recent logs:"
-                        bat 'docker-compose logs --tail=20 backend'
-                        bat 'docker-compose logs --tail=10 db'
-                        echo "Container status:"
+                    if (!servicesReady) {
+                        echo "Services failed to start. Final diagnostics:"
                         bat 'docker-compose ps'
-                        error "App did not start in time."
+                        bat 'docker-compose logs backend'
+                        bat 'docker-compose logs db'
+                        error "Services did not become ready in time."
                     }
-                }
-            }
-        }
-
-        stage('Debug - Final Status Check') {
-            steps {
-                script {
-                    echo "Final status check:"
-                    bat 'docker-compose ps'
-                    
-                    // Windows netstat command
-                    bat 'netstat -an | findstr :5000 || echo "No process listening on port 5000"'
-                    
-                    echo "Testing connectivity:"
-                    bat 'curl -v http://localhost:5000 || echo "Curl failed"'
                 }
             }
         }
@@ -109,13 +77,26 @@ pipeline {
                 script {
                     echo "Running comprehensive tests:"
                     
-                    // Test 1: Basic connectivity
+                    // Test 1: Test through docker-compose network
+                    bat 'docker-compose exec -T backend curl -f http://localhost:5000'
+                    
+                    // Test 2: Test from host machine
                     bat 'curl -f http://localhost:5000'
                     
-                    // Test 2: Check response content (Windows findstr)
-                    bat 'curl -s http://localhost:5000 | findstr "Hello" || echo "Hello not found in response"'
+                    // Test 3: Check response content
+                    def response = bat(
+                        script: 'curl -s http://localhost:5000',
+                        returnStdout: true
+                    ).trim()
                     
-                    // Test 3: Check HTTP status
+                    echo "Response from app: ${response}"
+                    
+                    // Test 4: Verify it contains expected content
+                    if (!response.contains("Hello") && !response.contains("DB")) {
+                        error "Response doesn't contain expected content: ${response}"
+                    }
+                    
+                    // Test 5: Check HTTP status
                     def httpStatus = bat(
                         script: 'curl -s -o nul -w "%{http_code}" http://localhost:5000',
                         returnStdout: true
@@ -126,6 +107,7 @@ pipeline {
                     }
                     
                     echo "All tests passed! HTTP Status: ${httpStatus}"
+                    echo "App response: ${response}"
                 }
             }
         }
@@ -137,12 +119,13 @@ pipeline {
             bat 'docker-compose down -v'
         }
         failure {
-            echo "Pipeline failed. Showing final container logs:"
+            echo "Pipeline failed. Showing final diagnostics:"
             script {
-                // Show logs on failure
-                bat 'docker-compose logs --tail=50 backend || echo "Failed to get backend logs"'
-                bat 'docker-compose logs --tail=20 db || echo "Failed to get db logs"'
+                bat 'docker-compose logs backend || echo "Failed to get backend logs"'
+                bat 'docker-compose logs db || echo "Failed to get db logs"'
                 bat 'docker-compose ps || echo "Failed to get container status"'
+                bat 'docker network ls || echo "Failed to get network info"'
+                bat 'netstat -an | findstr :5000 || echo "No process listening on port 5000"'
             }
         }
         success {
