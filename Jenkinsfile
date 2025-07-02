@@ -1,4 +1,16 @@
 pipeline {
+    node {
+        stage('SCM') {
+            checkout scm
+        }
+        stage('SonarQube Analysis') {
+            def scannerHome = tool 'SonarScanner';
+            withSonarQubeEnv() {
+            sh "${scannerHome}/bin/sonar-scanner"
+            }
+        }
+    }
+
     agent {
         dockerfile {
             filename 'dockerfile' // Root-level Dockerfile for Jenkins agent
