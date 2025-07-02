@@ -24,9 +24,9 @@ pipeline {
         stage('Build and Start Services') {
             steps {
                 dir('app') {
-                    sh 'docker-compose down -v || true'
-                    sh 'docker-compose build --no-cache'
-                    sh 'docker-compose up -d'
+                    sh 'docker compose down -v || true'
+                    sh 'docker compose build --no-cache'
+                    sh 'docker compose up -d'
                 }
             }
         }
@@ -38,7 +38,7 @@ pipeline {
                         echo "Waiting for PostgreSQL to be ready..."
                         def retries = 30
                         for (int i = 1; i <= retries; i++) {
-                            if (sh(script: 'docker-compose exec -T db pg_isready -U postgres', returnStatus: true) == 0) {
+                            if (sh(script: 'docker compose exec -T db pg_isready -U postgres', returnStatus: true) == 0) {
                                 echo "Database is ready!"
                                 return
                             }
@@ -58,20 +58,20 @@ pipeline {
                         echo "Waiting for Flask app to be ready..."
                         def retries = 30
                         for (int i = 1; i <= retries; i++) {
-                            if (sh(script: 'docker-compose exec -T backend curl -s -f http://localhost:5000/health', returnStatus: true) == 0) {
+                            if (sh(script: 'docker compose exec -T backend curl -s -f http://localhost:5000/health', returnStatus: true) == 0) {
                                 echo "Flask app is ready!"
                                 return
                             }
                             echo "App not ready yet, waiting... ($i/$retries)"
                             if (i % 10 == 0) {
-                                sh 'docker-compose logs --tail=20 backend || true'
-                                sh 'docker-compose ps || true'
+                                sh 'docker compose logs --tail=20 backend || true'
+                                sh 'docker compose ps || true'
                             }
                             sleep 3
                         }
-                        sh 'docker-compose logs backend || true'
-                        sh 'docker-compose logs db || true'
-                        sh 'docker-compose ps || true'
+                        sh 'docker compose logs backend || true'
+                        sh 'docker compose logs db || true'
+                        sh 'docker compose ps || true'
                         sh 'docker ps -a || true'
                         error "App did not start in time."
                     }
@@ -84,16 +84,16 @@ pipeline {
                 dir('app') {
                     script {
                         echo "Running HTTP tests..."
-                        sh 'docker-compose exec -T backend curl -f http://localhost:5000/health'
-                        sh 'docker-compose exec -T backend curl -f http://localhost:5000'
+                        sh 'docker compose exec -T backend curl -f http://localhost:5000/health'
+                        sh 'docker compose exec -T backend curl -f http://localhost:5000'
 
                         def httpStatus = sh(
-                            script: 'docker-compose exec -T backend curl -s -o /dev/null -w "%{http_code}" http://localhost:5000',
+                            script: 'docker compose exec -T backend curl -s -o /dev/null -w "%{http_code}" http://localhost:5000',
                             returnStdout: true
                         ).trim()
 
                         def response = sh(
-                            script: 'docker-compose exec -T backend curl -s http://localhost:5000',
+                            script: 'docker compose exec -T backend curl -s http://localhost:5000',
                             returnStdout: true
                         ).trim()
 
@@ -118,7 +118,7 @@ pipeline {
                 dir('app') {
                     script {
                         echo "Running unit tests..."
-                        sh 'docker-compose exec -T backend python -m pytest tests/ -v || echo "No tests found"'
+                        sh 'docker compose exec -T backend python -m pytest tests/ -v || echo "No tests found"'
                     }
                 }
             }
@@ -131,7 +131,7 @@ pipeline {
                 try {
                     dir('app') {
                         echo "Cleaning up containers..."
-                        sh 'docker-compose down -v || true'
+                        sh 'docker compose down -v || true'
                         sh 'docker system prune -f || true'
                     }
                 } catch (Exception e) {
@@ -144,9 +144,9 @@ pipeline {
                 try {
                     dir('app') {
                         echo "Pipeline failed. Collecting logs..."
-                        sh 'docker-compose logs backend || true'
-                        sh 'docker-compose logs db || true'
-                        sh 'docker-compose ps || true'
+                        sh 'docker compose logs backend || true'
+                        sh 'docker compose logs db || true'
+                        sh 'docker compose ps || true'
                         sh 'docker ps -a || true'
                     }
                 } catch (Exception e) {
