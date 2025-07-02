@@ -89,7 +89,7 @@ pipeline {
                         echo "Waiting for Flask app to be ready..."
                         def retries = 30
                         for (int i = 1; i <= retries; i++) {
-                            def exitCode = sh(script: 'docker-compose exec -T backend curl -s -f http://localhost:5000/health', returnStatus: true)
+                            def exitCode = sh(script: 'docker-compose exec -T backend python -c "import urllib.request; urllib.request.urlopen(\'http://localhost:5000/health\')"', returnStatus: true)
                             if (exitCode == 0) {
                                 echo "Flask app is ready!"
                                 return
@@ -117,16 +117,16 @@ pipeline {
                         echo "Running HTTP tests..."
                         
                         // Test health endpoint
-                        sh 'docker-compose exec -T backend curl -f http://localhost:5000/health'
+                        sh 'docker-compose exec -T backend python -c "import urllib.request; print(urllib.request.urlopen(\'http://localhost:5000/health\').read().decode())"'
                         
                         // Test main endpoint
                         def httpStatus = sh(
-                            script: 'docker-compose exec -T backend curl -s -o /dev/null -w "%{http_code}" http://localhost:5000',
+                            script: 'docker-compose exec -T backend python -c "import urllib.request; print(urllib.request.urlopen(\'http://localhost:5000\').getcode())"',
                             returnStdout: true
                         ).trim()
 
                         def response = sh(
-                            script: 'docker-compose exec -T backend curl -s http://localhost:5000',
+                            script: 'docker-compose exec -T backend python -c "import urllib.request; print(urllib.request.urlopen(\'http://localhost:5000\').read().decode())"',
                             returnStdout: true
                         ).trim()
 
