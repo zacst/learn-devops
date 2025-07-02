@@ -9,7 +9,7 @@ pipeline {
 
     environment {
         COMPOSE_PROJECT_NAME = "flaskci"
-        COMPOSE_FILE = "app/docker-compose.yml"
+        // Remove this line: COMPOSE_FILE = "app/docker-compose.yml"
         DOCKER_BUILDKIT = "0"
         COMPOSE_DOCKER_CLI_BUILD = "0"
     }
