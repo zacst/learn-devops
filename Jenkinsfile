@@ -21,12 +21,38 @@ pipeline {
             }
         }
 
+        stage('Setup Docker Compose') {
+            steps {
+                script {
+                    // Install Docker Compose since it's not in the agent image
+                    sh '''
+                        curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+                        chmod +x /usr/local/bin/docker-compose
+                        ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+                    '''
+                    sh 'docker --version'
+                    sh 'docker-compose --version'
+                    sh 'docker ps'
+                    sh 'ls -la app/'
+                }
+            }
+        }
+
         stage('Build and Start Services') {
             steps {
                 dir('app') {
-                    sh 'docker compose down -v || true'
-                    sh 'docker compose build --no-cache'
-                    sh 'docker compose up -d'
+                    script {
+                        try {
+                            sh 'docker-compose down -v || true'
+                            sh 'docker-compose build --no-cache'
+                            sh 'docker-compose up -d'
+                            sh 'docker-compose ps'
+                        } catch (Exception e) {
+                            echo "Error in build stage: ${e.getMessage()}"
+                            sh 'docker-compose logs || true'
+                            throw e
+                        }
+                    }
                 }
             }
         }
@@ -38,13 +64,18 @@ pipeline {
                         echo "Waiting for PostgreSQL to be ready..."
                         def retries = 30
                         for (int i = 1; i <= retries; i++) {
-                            if (sh(script: 'docker compose exec -T db pg_isready -U postgres', returnStatus: true) == 0) {
+                            def exitCode = sh(script: 'docker-compose exec -T db pg_isready -U postgres', returnStatus: true)
+                            if (exitCode == 0) {
                                 echo "Database is ready!"
                                 return
                             }
                             echo "Waiting... ($i/$retries)"
+                            if (i % 5 == 0) {
+                                sh 'docker-compose logs --tail=10 db || true'
+                            }
                             sleep 2
                         }
+                        sh 'docker-compose logs db || true'
                         error "Database did not become ready in time."
                     }
                 }
@@ -58,21 +89,21 @@ pipeline {
                         echo "Waiting for Flask app to be ready..."
                         def retries = 30
                         for (int i = 1; i <= retries; i++) {
-                            if (sh(script: 'docker compose exec -T backend curl -s -f http://localhost:5000/health', returnStatus: true) == 0) {
+                            def exitCode = sh(script: 'docker-compose exec -T backend curl -s -f http://localhost:5000/health', returnStatus: true)
+                            if (exitCode == 0) {
                                 echo "Flask app is ready!"
                                 return
                             }
                             echo "App not ready yet, waiting... ($i/$retries)"
                             if (i % 10 == 0) {
-                                sh 'docker compose logs --tail=20 backend || true'
-                                sh 'docker compose ps || true'
+                                sh 'docker-compose logs --tail=20 backend || true'
+                                sh 'docker-compose ps || true'
                             }
                             sleep 3
                         }
-                        sh 'docker compose logs backend || true'
-                        sh 'docker compose logs db || true'
-                        sh 'docker compose ps || true'
-                        sh 'docker ps -a || true'
+                        sh 'docker-compose logs backend || true'
+                        sh 'docker-compose logs db || true'
+                        sh 'docker-compose ps || true'
                         error "App did not start in time."
                     }
                 }
@@ -84,16 +115,18 @@ pipeline {
                 dir('app') {
                     script {
                         echo "Running HTTP tests..."
-                        sh 'docker compose exec -T backend curl -f http://localhost:5000/health'
-                        sh 'docker compose exec -T backend curl -f http://localhost:5000'
-
+                        
+                        // Test health endpoint
+                        sh 'docker-compose exec -T backend curl -f http://localhost:5000/health'
+                        
+                        // Test main endpoint
                         def httpStatus = sh(
-                            script: 'docker compose exec -T backend curl -s -o /dev/null -w "%{http_code}" http://localhost:5000',
+                            script: 'docker-compose exec -T backend curl -s -o /dev/null -w "%{http_code}" http://localhost:5000',
                             returnStdout: true
                         ).trim()
 
                         def response = sh(
-                            script: 'docker compose exec -T backend curl -s http://localhost:5000',
+                            script: 'docker-compose exec -T backend curl -s http://localhost:5000',
                             returnStdout: true
                         ).trim()
 
@@ -118,7 +151,10 @@ pipeline {
                 dir('app') {
                     script {
                         echo "Running unit tests..."
-                        sh 'docker compose exec -T backend python -m pytest tests/ -v || echo "No tests found"'
+                        def exitCode = sh(script: 'docker-compose exec -T backend python -m pytest tests/ -v', returnStatus: true)
+                        if (exitCode != 0) {
+                            echo "No tests found or tests failed (exit code: ${exitCode})"
+                        }
                     }
                 }
             }
@@ -130,9 +166,15 @@ pipeline {
             script {
                 try {
                     dir('app') {
+                        echo "Collecting final logs..."
+                        sh 'docker-compose logs --tail=50 || true'
+                        sh 'docker-compose ps || true'
+                        
                         echo "Cleaning up containers..."
-                        sh 'docker compose down -v || true'
-                        sh 'docker system prune -f || true'
+                        sh 'docker-compose down -v || true'
+                        
+                        // Clean up images created during this build
+                        sh 'docker image prune -f --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" || true'
                     }
                 } catch (Exception e) {
                     echo "Cleanup failed: ${e.getMessage()}"
@@ -143,14 +185,14 @@ pipeline {
             script {
                 try {
                     dir('app') {
-                        echo "Pipeline failed. Collecting logs..."
-                        sh 'docker compose logs backend || true'
-                        sh 'docker compose logs db || true'
-                        sh 'docker compose ps || true'
+                        echo "Pipeline failed. Collecting detailed logs..."
+                        sh 'docker-compose config || true'
+                        sh 'docker-compose logs || true'
                         sh 'docker ps -a || true'
+                        sh 'docker images || true'
                     }
                 } catch (Exception e) {
-                    echo "Failed to collect logs: ${e.getMessage()}"
+                    echo "Failed to collect failure logs: ${e.getMessage()}"
                 }
             }
         }
