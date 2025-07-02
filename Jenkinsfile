@@ -1,7 +1,7 @@
 pipeline {
     agent {
         dockerfile {
-            filename 'Dockerfile' // Root-level Dockerfile for Jenkins agent
+            filename 'dockerfile' // Root-level Dockerfile for Jenkins agent
             additionalBuildArgs '--no-cache'
             args '--user root -v /var/run/docker.sock:/var/run/docker.sock'
         }
