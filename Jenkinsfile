@@ -38,6 +38,47 @@ pipeline {
             }
         }
 
+        stage('SonarQube Analysis') {
+            steps {
+                script {
+                    // Run SonarQube analysis before building containers
+                    def scannerHome = tool 'SonarQube Scanner 7.1.0.4889'
+                    withSonarQubeEnv('SonarQube') { // 'SonarQube' should match your SonarQube server configuration name
+                        sh """
+                            ${scannerHome}/bin/sonar-scanner \
+                            -Dsonar.projectKey=flask-ci-app \
+                            -Dsonar.projectName='Flask CI Application' \
+                            -Dsonar.projectVersion=1.0 \
+                            -Dsonar.sources=app/ \
+                            -Dsonar.language=py \
+                            -Dsonar.sourceEncoding=UTF-8 \
+                            -Dsonar.python.coverage.reportPaths=app/coverage.xml \
+                            -Dsonar.exclusions=**/*test*/**,**/venv/**,**/__pycache__/**,**/migrations/**
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                script {
+                    // Wait for SonarQube analysis to complete and check quality gate
+                    timeout(time: 5, unit: 'MINUTES') {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            echo "Quality Gate failed: ${qg.status}"
+                            // You can choose to fail the build or just warn
+                            // error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                            currentBuild.result = 'UNSTABLE'
+                        } else {
+                            echo "Quality Gate passed successfully!"
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Build and Start Services') {
             steps {
                 dir('app') {
@@ -151,7 +192,7 @@ pipeline {
                 dir('app') {
                     script {
                         echo "Running unit tests..."
-                        def exitCode = sh(script: 'docker-compose exec -T backend python -m pytest tests/ -v', returnStatus: true)
+                        def exitCode = sh(script: 'docker-compose exec -T backend python -m pytest tests/ -v --cov=. --cov-report=xml:coverage.xml', returnStatus: true)
                         if (exitCode != 0) {
                             echo "No tests found or tests failed (exit code: ${exitCode})"
                         }
